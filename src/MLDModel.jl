@@ -1,10 +1,13 @@
 using JuMP, HiGHS
 
-function add_product_constraint!(model, z, delta, f_x, M, m)
-    @constraint(model, z .<= M .* delta)
-    @constraint(model, z .>= m .* delta)
-    @constraint(model, z .<= f_x .- m .* (1 .- delta))
-    @constraint(model, z .>= f_x .- M .* (1 .- delta))
+function add_product_constraint!(model, z, delta, f_x)
+    # z = delta * f_x
+    # delta == 1 => z == f_x
+    # delta == 0 => z == 0
+
+    # We use broadcasting for vector inputs
+    @constraint(model, [i = eachindex(z)], delta[i] => {z[i] == f_x[i]})
+    @constraint(model, [i = eachindex(z)], !delta[i] => {z[i] == 0})
 end
 
 function add_switching_cost!(model, x, x_prev_val)
@@ -81,21 +84,21 @@ function solve_mpc(h0, href, u_prev=Dict(); N=10, Ts=5.0, fixed_u=Dict())
 
 
     # zi3 ≡ Vi3 (hi - h3): flow through the bottom valves. Vi3 must be open
-    @variable(mld_model, z13[1:N])
-    @variable(mld_model, z23[1:N])
+    @variable(mld_model, -0.7 <= z13[1:N] <= 0.7)
+    @variable(mld_model, -0.7 <= z23[1:N] <= 0.7)
 
     # z0i ≡ max{hv, hi} - hv = δ0i * (hi - hv): the height of the water level in i above the upper valve height hv
-    @variable(mld_model, z01[1:N])
-    @variable(mld_model, z02[1:N])
-    @variable(mld_model, z03[1:N])
+    @variable(mld_model, -0.7 <= z01[1:N] <= 0.7)
+    @variable(mld_model, -0.7 <= z02[1:N] <= 0.7)
+    @variable(mld_model, -0.7 <= z03[1:N] <= 0.7)
 
     # zi ≡ Vi (z0i - z03): flow to the middle. Vi must be open. z0i or z03 must be nonzero; above the upper valve height
-    @variable(mld_model, z1[1:N])
-    @variable(mld_model, z2[1:N])
+    @variable(mld_model, -0.7 <= z1[1:N] <= 0.7)
+    @variable(mld_model, -0.7 <= z2[1:N] <= 0.7)
 
-    @variable(mld_model, zL1[1:N]) # VL1 * h1
-    @variable(mld_model, zL2[1:N]) # VL2 * h2
-    @variable(mld_model, zL3[1:N]) # VL3 * h3
+    @variable(mld_model, 0 <= zL1[1:N] <= 0.7) # VL1 * h1
+    @variable(mld_model, 0 <= zL2[1:N] <= 0.7) # VL2 * h2
+    @variable(mld_model, 0 <= zL3[1:N] <= 0.7) # VL3 * h3
 
     if haskey(fixed_u, :Q1)
         fix.(Q1, fixed_u[:Q1]; force=true)
@@ -125,41 +128,41 @@ function solve_mpc(h0, href, u_prev=Dict(); N=10, Ts=5.0, fixed_u=Dict())
         fix.(VL3, fixed_u[:VL3]; force=true)
     end
 
-    M = 0.62
-    m = -0.62
     eps = 1e-5
 
     for k in 1:N
         # Tank 1
-        @constraint(mld_model, (hv - h1[k]) <= M * (1 - δ01[k]))
-        @constraint(mld_model, (hv - h1[k]) >= eps + (m - eps) * δ01[k])
+        # δ01[k] == 1 => h1 >= hv
+        @constraint(mld_model, δ01[k] => {h1[k] >= hv})
+        # δ01[k] == 0 => h1 <= hv - eps
+        @constraint(mld_model, !δ01[k] => {h1[k] <= hv - eps})
 
         # Tank 2
-        @constraint(mld_model, (hv - h2[k]) <= M * (1 - δ02[k]))
-        @constraint(mld_model, (hv - h2[k]) >= eps + (m - eps) * δ02[k])
+        @constraint(mld_model, δ02[k] => {h2[k] >= hv})
+        @constraint(mld_model, !δ02[k] => {h2[k] <= hv - eps})
 
         # Tank 3
-        @constraint(mld_model, (hv - h3[k]) <= M * (1 - δ03[k]))
-        @constraint(mld_model, (hv - h3[k]) >= eps + (m - eps) * δ03[k])
+        @constraint(mld_model, δ03[k] => {h3[k] >= hv})
+        @constraint(mld_model, !δ03[k] => {h3[k] <= hv - eps})
     end
 
     # z_i3 = V_i3 * (h_i - h_3)
-    add_product_constraint!(mld_model, z13, V13, h1[1:N] .- h3[1:N], M, m)
-    add_product_constraint!(mld_model, z23, V23, h2[1:N] .- h3[1:N], M, m)
+    add_product_constraint!(mld_model, z13, V13, h1[1:N] .- h3[1:N])
+    add_product_constraint!(mld_model, z23, V23, h2[1:N] .- h3[1:N])
 
     # z_0i = δ0i * (hi - hv)
-    add_product_constraint!(mld_model, z01, δ01, h1[1:N] .- hv, M, m)
-    add_product_constraint!(mld_model, z02, δ02, h2[1:N] .- hv, M, m)
-    add_product_constraint!(mld_model, z03, δ03, h3[1:N] .- hv, M, m)
+    add_product_constraint!(mld_model, z01, δ01, h1[1:N] .- hv)
+    add_product_constraint!(mld_model, z02, δ02, h2[1:N] .- hv)
+    add_product_constraint!(mld_model, z03, δ03, h3[1:N] .- hv)
 
     # z_i = V_i * (z0i - z03)
-    add_product_constraint!(mld_model, z1, V1, z01 .- z03, M, m)
-    add_product_constraint!(mld_model, z2, V2, z02 .- z03, M, m)
+    add_product_constraint!(mld_model, z1, V1, z01 .- z03)
+    add_product_constraint!(mld_model, z2, V2, z02 .- z03)
 
     # z = V * h
-    add_product_constraint!(mld_model, zL1, VL1, h1[1:N], M, 0)
-    add_product_constraint!(mld_model, zL2, VL2, h2[1:N], M, 0)
-    add_product_constraint!(mld_model, zL3, VL3, h3[1:N], M, 0)
+    add_product_constraint!(mld_model, zL1, VL1, h1[1:N])
+    add_product_constraint!(mld_model, zL2, VL2, h2[1:N])
+    add_product_constraint!(mld_model, zL3, VL3, h3[1:N])
 
     A_sec = 0.0154
     coeff = Ts / A_sec
@@ -190,9 +193,9 @@ function solve_mpc(h0, href, u_prev=Dict(); N=10, Ts=5.0, fixed_u=Dict())
     )
 
 
-    @variable(mld_model, abs_err_h1[1:N])
-    @variable(mld_model, abs_err_h2[1:N])
-    @variable(mld_model, abs_err_h3[1:N])
+    @variable(mld_model, 0 <= abs_err_h1[1:N] <= 0.7)
+    @variable(mld_model, 0 <= abs_err_h2[1:N] <= 0.7)
+    @variable(mld_model, 0 <= abs_err_h3[1:N] <= 0.7)
 
 
     switching_penalty_expr = AffExpr(0.0)
