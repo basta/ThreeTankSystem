@@ -140,12 +140,12 @@ function run!(sim::Simulation; duration::Float64, Ts::Float64=1.0)
             sys.h3 => max(sim.current_state[3], 1e-4)
         ]
 
-        prob_step = ODEProblem(sim.plant, u0_step, (t_current, t_current + Ts), p_step)
+        # prob_step = ODEProblem(sim.plant, u0_step, (t_current, t_current + Ts), p_step)
+        prob_step = ODEProblem(sim.plant, merge(Dict(u0_step), p_step), (t_current, t_current + Ts))
         sol = solve(prob_step, Rodas5P(), saveat=Ts, reltol=1e-6, abstol=1e-6)
 
         # Update state
         sim.current_state = [sol[sys.h1][end], sol[sys.h2][end], sol[sys.h3][end]]
-        println("Step $k: h = $(sim.current_state)")
         t_current += Ts
 
         # Record state

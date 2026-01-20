@@ -8,7 +8,6 @@ using HiGHS
 using LinearAlgebra
 
 # Simulation Parameters
-# Simulation Parameters
 Ts = 5.0
 T_sim = 300.0
 
