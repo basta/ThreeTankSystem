@@ -358,6 +358,136 @@ begin
     plot(p_levels, p_pump, p_valves, layout=@layout([a; b c]), size=(800, 800))
 end
 
+# ╔═╡ a139df4c-958e-41e8-96fd-450a312843f5
+
+
+# ╔═╡ 62adcbe2-5990-489f-aadd-791ff9846288
+function draw_dynamic_frame(h_current, u_current_Q, u_current_V)
+    # Re-use the static background logic, but we will overlay dynamic elements
+    # We copy the setup from your draw_system_schematic for consistency
+    
+    p = plot(aspect_ratio=:equal, axis=nothing, border=:none, size=(800, 400))
+    
+    # --- CONSTANTS & SCALING ---
+    # Map physical height (e.g., 0.6m) to visual height (3.0 units)
+    H_SCALE = 3.0 / 0.6
+    
+    # Valve State Colors (Green = Open, White = Closed)
+    v_color(is_open) = is_open > 0.5 ? :green : :white
+    
+    # --- 1. DRAW TANKS (Outlines) ---
+    tank_xs = [0.0, 6.0, 3.0] # T1, T2, T3 (Note T3 is middle visually, but index 3)
+    tank_labels = ["1", "2", "3"]
+    
+    for (i, x) in enumerate(tank_xs)
+        # Draw Tank Outline
+        plot!(p, Shape([x, x+1.2, x+1.2, x], [0, 0, 3, 3]), 
+              color=:white, linecolor=:black, lw=2, label="")
+        
+        # --- DYNAMIC WATER ---
+        # Draw Water Level Rect (Blue)
+        # Clamp height to visual max (3.0) to prevent drawing spillover
+        h_visual = clamp(h_current[i] * H_SCALE, 0, 3.0)
+        if h_visual > 0.01
+            plot!(p, Shape([x, x+1.2, x+1.2, x], [0, 0, h_visual, h_visual]), 
+                  color=RGBA(0, 0, 1, 0.5), linecolor=nothing, label="")
+        end
+        
+        annotate!(x+0.6, 1.5, text(tank_labels[i], 20, :black))
+    end
+
+    # --- 2. DYNAMIC PUMPS ---
+    # Pump 1 (Left)
+    q1_active = u_current_Q[1] > 0
+    c_p1 = q1_active ? :green : :white
+    scatter!(p, [-0.5], [3.5], markersize=12, color=c_p1, markerstrokecolor=:black, label="")
+    annotate!(-0.5, 4.0, text("Q1: $(round(u_current_Q[1], digits=3))", 8, :black))
+
+    # Pump 2 (Right)
+    # Check if Q2 exists in input vector (it might be index 2)
+    q2_val = length(u_current_Q) >= 2 ? u_current_Q[2] : 0.0
+    c_p2 = q2_val > 0 ? :green : :white
+    scatter!(p, [7.7], [3.5], markersize=12, color=c_p2, markerstrokecolor=:black, label="")
+    annotate!(7.7, 4.0, text("Q2: $(round(q2_val, digits=3))", 8, :black))
+
+    # --- 3. DYNAMIC VALVES ---
+    # Helper to draw valve bowtie with dynamic color
+    function draw_valve(x, y, label_text, is_open)
+        w, h = 0.25, 0.15
+        v_shape = Shape([x-w, x+w, x+w, x-w], [y+h, y-h, y+h, y-h])
+        plot!(p, v_shape, color=v_color(is_open), linecolor=:black, lw=1, label="")
+        annotate!(x, y+0.3, text(label_text, 8, :black))
+    end
+    
+    # Mapping simulation inputs to valve positions (Logic depends on how MPC output is ordered)
+    # Assuming u_current_V order: [V1, V2, V13, V23, VL1, VL2, VL3] based on typical setup
+    # If using your checkbox logic, we need to be careful. 
+    # For visualization, let's map by name if possible, or assume a standard full vector.
+    # Here we assume the full vector is passed or we default to 0.
+    
+    # Extract values safely (default to 0 if index out of bounds)
+    get_v(idx) = length(u_current_V) >= idx ? u_current_V[idx] : 0.0
+    
+    # Upper
+    draw_valve(2.1, 2.0, "V1", get_v(1))
+    draw_valve(5.1, 2.0, "V2", get_v(2))
+    
+    # Lower (if they exist in vector, usually indices 3,4)
+    draw_valve(2.1, 0.5, "V13", get_v(3))
+    draw_valve(5.1, 0.5, "V23", get_v(4))
+    
+    # Drains (indices 5,6,7)
+    draw_valve(0.6, -0.5, "VL1", get_v(5)) # T1 Drain
+    draw_valve(6.6, -0.5, "VL2", get_v(6)) # T2 Drain
+    draw_valve(3.6, -0.5, "VL3", get_v(7)) # T3 Drain
+
+    # Pipes (Static gray lines for context)
+    plot!(p, [1.2, 3.0], [2.0, 2.0], color=:gray, lw=4, alpha=0.3, label="")
+    plot!(p, [4.2, 6.0], [2.0, 2.0], color=:gray, lw=4, alpha=0.3, label="")
+    plot!(p, [1.2, 3.0], [0.5, 0.5], color=:gray, lw=4, alpha=0.3, label="")
+    plot!(p, [4.2, 6.0], [0.5, 0.5], color=:gray, lw=4, alpha=0.3, label="")
+
+    return p
+end
+
+# ╔═╡ 115647e0-567a-45e6-ad6f-64284aee59af
+@bind time_idx Slider(1:1:(length(sim_result.history[:t])-1); show_value=false)
+
+# ╔═╡ 1d19d08b-b7a2-4c5f-bd66-31d8d5a936bc
+begin
+    # 1. Setup Data
+    # Extract time and state matrices
+    anim_t = sim_result.history[:t]
+    anim_h = reduce(vcat, transpose.(sim_result.history[:h])) # [N x 3]
+    
+    # u_Q and u_V are likely Vector of Vectors in DifferentialEquations solution style
+    # We convert them to matrices for easier indexing
+    anim_uQ = sim_result.history[:u_Q] 
+    anim_uV = sim_result.history[:u_V]
+    
+    max_idx = length(anim_t)
+    
+    md"""
+    
+    Current Time: **$(round(anim_t[time_idx], digits=1)) s**
+    
+    $(
+        # Call the drawing function with data at current index
+        begin
+            # Extract snapshots
+            h_snap = anim_h[time_idx, :]
+            Q_snap = anim_uQ[time_idx] # Vector
+            V_snap = anim_uV[time_idx] # Vector
+            
+            draw_dynamic_frame(h_snap, Q_snap, V_snap)
+        end
+    )
+    """
+end
+
+# ╔═╡ fab83415-032b-4a42-80cc-84d2b41a546f
+
+
 # ╔═╡ Cell order:
 # ╠═51116c5a-f643-11f0-a92d-2d83747e0a66
 # ╟─fd4b345b-1191-47bd-8d6b-39bbc88143fc
@@ -367,4 +497,9 @@ end
 # ╠═1f084c9c-fe0a-4295-9472-baf8195c5015
 # ╟─54d037a4-3bff-429f-8e75-5a9334545602
 # ╠═77deb1da-cd66-4e28-8749-3914865bb0ff
-# ╠═d5c9e170-e0f9-465f-88af-70976b17c093
+# ╟─d5c9e170-e0f9-465f-88af-70976b17c093
+# ╠═a139df4c-958e-41e8-96fd-450a312843f5
+# ╟─62adcbe2-5990-489f-aadd-791ff9846288
+# ╠═115647e0-567a-45e6-ad6f-64284aee59af
+# ╠═1d19d08b-b7a2-4c5f-bd66-31d8d5a936bc
+# ╠═fab83415-032b-4a42-80cc-84d2b41a546f
