@@ -1,14 +1,14 @@
 using ModelingToolkit
 
-function build_nonlinear_plant()
+function build_nonlinear_plant(p::TankParameters=TankParameters())
     @independent_variables t
     @variables h1(t) h2(t) h3(t)
     @variables Q13V1(t) Q23V2(t) Q13V13(t) Q23V23(t) QL1(t) QL2(t) QN3(t)
     @parameters V1 = 0 V2 = 0 V13 = 0 V23 = 0 VL1 = 0 VL2 = 0 VL3 = 0
     @parameters Q1 = 0 Q2 = 0
 
-    @parameters A = 0.0154 az = 1 Sh = 2e-5 g = 9.81 hv = 0.3 hmax = 0.62 Qimax = 1e-4 Ts = 5
-    @parameters SL1 = 2e-5 SL2 = 2e-5 SL3 = 2e-5 SL13 = 2e-5 SL23 = 2e-5 S1 = 2e-5 S2 = 2e-5
+    @parameters A = p.A az = p.az Sh = p.Sh g = p.g hv = p.hv hmax = p.hmax Qimax = p.Qimax
+    @parameters SL1 = p.SL1 SL2 = p.SL2 SL3 = p.SL3 SL13 = p.SL13 SL23 = p.SL23 S1 = p.S1 S2 = p.S2
     D = Differential(t)
 
     soft_sign_sqrt = x -> x / (sqrt(abs(x) + 1e-3))

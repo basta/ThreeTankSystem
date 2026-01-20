@@ -14,16 +14,17 @@ steps = Int(T_sim / Ts)
 
 h_ref = [0.5, 0.0, 0.1]
 
-sys = structural_simplify(build_nonlinear_plant())
+sys = structural_simplify(build_nonlinear_plant(TankParameters()))
 
+tp = TankParameters()
 p_static = Dict(
-    sys.A => 0.0154,
-    sys.az => 1.0,
-    sys.g => 9.81,
-    sys.hv => 0.3,
-    sys.SL1 => 2e-5, sys.SL2 => 2e-5, sys.SL3 => 2e-5,
-    sys.SL13 => 2e-5, sys.SL23 => 2e-5,
-    sys.S1 => 2e-5, sys.S2 => 2e-5
+    sys.A => tp.A,
+    sys.az => tp.az,
+    sys.g => tp.g,
+    sys.hv => tp.hv,
+    sys.SL1 => tp.SL1, sys.SL2 => tp.SL2, sys.SL3 => tp.SL3,
+    sys.SL13 => tp.SL13, sys.SL23 => tp.SL23,
+    sys.S1 => tp.S1, sys.S2 => tp.S2
 )
 
 p_nominal = Dict([
@@ -63,7 +64,7 @@ last_u = Dict()
 for k in 1:steps
     global current_h, h_ref, last_u
 
-    u_opt = solve_mpc(current_h, h_ref, last_u; fixed_u=nominal_fixed_u, N=5, Ts=Ts)
+    u_opt = solve_mpc(current_h, h_ref, last_u; fixed_u=nominal_fixed_u, N=5, p=tp)
     last_u = u_opt
     u_history_Q[k] = u_opt.Q1
     u_history_V[k] = u_opt.V1

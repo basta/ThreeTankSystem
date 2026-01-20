@@ -25,7 +25,7 @@ function add_switching_cost!(model, x, x_prev_val)
     return sum(d)
 end
 
-function solve_mpc(h0, href, u_prev=Dict(); N=10, Ts=5.0, fixed_u=Dict())
+function solve_mpc(h0, href, u_prev=Dict(); N=10, p::TankParameters=TankParameters(), fixed_u=Dict())
     mld_model = Model(HiGHS.Optimizer)
     set_silent(mld_model)
 
@@ -33,26 +33,27 @@ function solve_mpc(h0, href, u_prev=Dict(); N=10, Ts=5.0, fixed_u=Dict())
     optimizing_inputs = setdiff(all_inputs, keys(fixed_u))
     println("Optimizing parameters: ", optimizing_inputs)
 
-    N = 10                 # Prediction horizon
     λ_switch = 0.1         # Penalizes switching valve states for V*
-    Q_max = 1e-4
-    h_max = 0.62
 
-    # The following parameters follow notation from the paper
-    A = 0.0154
-    az = 1
-    Sh = 2e-5
-    g = 9.81
-    hv = 0.3
-    hmax = 0.62
-    Qimax = 1e-4
-    SL1 = 2e-5
-    SL2 = 2e-5
-    SL3 = 2e-5
-    SL13 = 2e-5
-    SL23 = 2e-5
-    S1 = 2e-5
-    S2 = 2e-5
+    # Use parameters from p
+    A = p.A
+    az = p.az
+    Sh = p.Sh
+    g = p.g
+    hv = p.hv
+    hmax = p.hmax
+    Qimax = p.Qimax
+    Ts = p.Ts
+    SL1 = p.SL1
+    SL2 = p.SL2
+    SL3 = p.SL3
+    SL13 = p.SL13
+    SL23 = p.SL23
+    S1 = p.S1
+    S2 = p.S2
+
+    Q_max = Qimax
+    h_max = hmax
 
     # The inputs
     @variable(mld_model, 0 <= Q1[1:N] <= Q_max)
@@ -164,8 +165,7 @@ function solve_mpc(h0, href, u_prev=Dict(); N=10, Ts=5.0, fixed_u=Dict())
     add_product_constraint!(mld_model, zL2, VL2, h2[1:N])
     add_product_constraint!(mld_model, zL3, VL3, h3[1:N])
 
-    A_sec = 0.0154
-    coeff = Ts / A_sec
+    coeff = Ts / A
 
 
     k_13 = az * SL13 * sqrt(2 * g / hmax)

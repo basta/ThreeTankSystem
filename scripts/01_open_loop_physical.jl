@@ -4,13 +4,14 @@ using ModelingToolkit
 using OrdinaryDiffEq
 using Plots
 
-sys = build_nonlinear_plant()
-# 2. Simplify the System
+p = TankParameters()
+sys = build_nonlinear_plant(p)
+# Simplify the System
 # MTK needs to "compile" the symbolic equations into something numerical.
 # It eliminates redundant equations (index reduction) here.
 sys_simplified = structural_simplify(sys)
 
-# 3. Define Simulation Conditions
+# Define Simulation Conditions
 # You can use the symbols directly (sys.x) or names (:x)
 tspan = (0.0, 10.0)
 
@@ -30,13 +31,13 @@ sim_cond = [
 ]
 
 
-# 4. Build and Solve
+# Build and Solve
 prob = ODEProblem(sys_simplified, sim_cond, tspan)
 sol = solve(prob, Tsit5())
 
 visualize_tanks(sol, sys_simplified)
 
-# 5. Plot Results
+# Plot Results
 plot(sol,
     idxs=[sys.h1, sys.h2, sys.h3],
     layout=(3, 1),
