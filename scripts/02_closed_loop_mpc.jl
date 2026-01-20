@@ -8,97 +8,40 @@ using HiGHS
 using LinearAlgebra
 
 # Simulation Parameters
-Ts = 1
+# Simulation Parameters
+Ts = 5.0
 T_sim = 300.0
-steps = Int(T_sim / Ts)
-
-h_ref = [0.5, 0.0, 0.1]
-
-sys = structural_simplify(build_nonlinear_plant(TankParameters()))
 
 tp = TankParameters()
-p_static = Dict(
-    sys.A => tp.A,
-    sys.az => tp.az,
-    sys.g => tp.g,
-    sys.hv => tp.hv,
-    sys.SL1 => tp.SL1, sys.SL2 => tp.SL2, sys.SL3 => tp.SL3,
-    sys.SL13 => tp.SL13, sys.SL23 => tp.SL23,
-    sys.S1 => tp.S1, sys.S2 => tp.S2
-)
+sys = structural_simplify(build_nonlinear_plant(tp))
+h0 = [0.0, 0.04, 0.5]
+h_ref = [0.5, 0.0, 0.1]
 
-p_nominal = Dict([
-    sys.Q1 => 0,
-    sys.Q2 => 0.0,
-    sys.V1 => 0.0,
-    sys.V2 => 0.0,
-    sys.V13 => 0.0,
-    sys.V23 => 0.0,
-    sys.VL1 => 0.0,
-    sys.VL2 => 0.0,
-    sys.VL3 => 1.0, # outflow open
-])
+# Controller
+lambda_switch = 0.1
+settings = InputSettings()
+# Enable control for pumps and some valves
+set_active!(settings, :Q1, :V1)
 
-# :Q1 and :V1 not included, will be optimized
-nominal_fixed_u = Dict(
-    :Q2 => 0.,
-    :V2 => 0.0,
-    :V13 => 0.0, :V23 => 0.0,
-    :VL1 => 0.0, :VL2 => 0.0,
-    :VL3 => 1.0,
-)
+# Fix VL3 to always be open (nominal value)
+set_nominal!(settings, :VL3, 1.0)
+# Other valves (V13, V23, VL1, VL2) default to 0.0, and are NOT active
 
-# initial state
-current_h = [0.0, 0.04, 0.5]
-u0_plant = [sys.h1 => current_h[1], sys.h2 => current_h[2], sys.h3 => current_h[3]]
+ctrl = MPCController(params=tp, horizon=5, references=h_ref, lambda_switch=lambda_switch, settings=settings)
 
-h_history = zeros(steps + 1, 3)
-u_history_Q = zeros(steps)
-u_history_V = zeros(steps)
-t_history = 0:Ts:T_sim
-
-prob = ODEProblem(sys, u0_plant, (0.0, T_sim), p_nominal)
+# Simulation
+sim = Simulation(plant=sys, controller=ctrl, h0=h0)
 
 println("Starting simulation")
-last_u = Dict()
-for k in 1:steps
-    global current_h, h_ref, last_u
+run!(sim; duration=T_sim, Ts=Ts)
 
-    u_opt = solve_mpc(current_h, h_ref, last_u; fixed_u=nominal_fixed_u, N=5, p=tp)
-    last_u = u_opt
-    u_history_Q[k] = u_opt.Q1
-    u_history_V[k] = u_opt.V1
-    h_history[k, :] = current_h
+# Extract results for plotting
+t_history = sim.history[:t]
+h_history = reduce(vcat, transpose.(sim.history[:h])) # Convert to matrix
+u_history_Q = sim.history[:u_Q]
+u_history_V = sim.history[:u_V]
 
-    p_current_inputs = Dict(
-        sys.Q1 => u_opt.Q1,
-        sys.V1 => Float64(u_opt.V1),
-        sys.V2 => Float64(u_opt.V2),
-        sys.Q2 => u_opt.Q2,
-        # Ensure other inputs are maintained from nominal if not optimized
-        sys.VL3 => p_nominal[sys.VL3],
-        sys.V13 => p_nominal[sys.V13],
-        sys.V23 => p_nominal[sys.V23],
-        sys.VL1 => p_nominal[sys.VL1],
-        sys.VL2 => p_nominal[sys.VL2]
-    )
-
-    p_step = merge(p_static, p_current_inputs)
-
-    u0_step = [
-        sys.h1 => max(current_h[1], 1e-4),
-        sys.h2 => max(current_h[2], 1e-4),
-        sys.h3 => max(current_h[3], 1e-4)
-    ]
-
-    prob_step = ODEProblem(sys, u0_step, ((k - 1) * Ts, k * Ts), p_step)
-
-    sol = solve(prob_step, Rodas5P(), saveat=Ts, reltol=1e-6, abstol=1e-6)
-    # Explicitly extract states in the correct order [h1, h2, h3]
-    current_h = [sol[sys.h1][end], sol[sys.h2][end], sol[sys.h3][end]]
-end
-h_history[end, :] = current_h
-
+# Plotting (reuse previous logic)
 p1 = plot(t_history, h_history[:, 1], label="h1", lw=2, color=:blue,
     ylabel="Level [m]", title="Nominal Operation", legend=:bottomright)
 plot!(p1, t_history, h_history[:, 2], label="h2", lw=2, color=:green)

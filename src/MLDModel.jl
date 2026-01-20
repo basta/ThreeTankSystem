@@ -35,11 +35,11 @@ function add_switching_cost!(model, x, x_prev_val, refs_store)
     return sum(d)
 end
 
-function build_mpc_model(p::TankParameters, N::Int)
+function build_mpc_model(p::TankParameters, N::Int, λ_switch::Float64)
     mld_model = Model(HiGHS.Optimizer)
     set_silent(mld_model)
 
-    λ_switch = 0.1
+
 
     # Unpack parameters
     A = p.A
@@ -264,23 +264,10 @@ function update_mpc_model!(mpc_refs::MPCModelRefs, h0, href, u_prev=Dict(), fixe
         set_normalized_rhs(constrs[2], val_float)
     end
 
-    #  Fix inputs (and unfix if no longer constrained)
-    input_names = [:Q1, :Q2, :V1, :V2, :V13, :V23, :VL1, :VL2, :VL3]
-    for name in input_names
+    #  Fix inputs
+    for (name, val) in fixed_u
         if haskey(mpc_refs.vars, name)
-            var_refs = mpc_refs.vars[name]
-            if haskey(fixed_u, name)
-                val = fixed_u[name]
-                fix.(var_refs, val; force=true)
-            else
-                # If not in fixed_u, ensure it is free to be optimized
-                # We need to unfix it if it was previously fixed
-                for v in var_refs
-                    if is_fixed(v)
-                        unfix(v)
-                    end
-                end
-            end
+            fix.(mpc_refs.vars[name], val; force=true)
         end
     end
 end
@@ -303,9 +290,9 @@ function extract_solution(mpc_refs::MPCModelRefs)
     )
 end
 
-function solve_mpc(h0, href, u_prev=Dict(); N=10, p::TankParameters=TankParameters(), fixed_u=Dict())
+function solve_mpc(h0, href, u_prev=Dict(); N=10, p::TankParameters=TankParameters(), fixed_u=Dict(), λ_switch=0.1)
     # Convenience function using a throw-away model
-    mpc_refs = build_mpc_model(p, N)
+    mpc_refs = build_mpc_model(p, N, λ_switch)
     update_mpc_model!(mpc_refs, h0, href, u_prev, fixed_u)
     optimize!(mpc_refs.model)
     return extract_solution(mpc_refs)
